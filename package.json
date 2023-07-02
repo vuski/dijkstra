@@ -5,7 +5,9 @@
     "@loaders.gl/json": "^3.4.4",
     "@mapbox/mapbox-gl-language": "^1.0.1",
     "deck.gl": "^8.9.18",
+    "delaunator": "^5.0.0",
     "fastpriorityqueue": "^0.7.4",
+    "heapify": "^0.6.0",
     "loaders.gl": "^0.3.5",
     "mapbox-gl": "^2.15.0"
   },

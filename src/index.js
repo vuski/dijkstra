@@ -11,84 +11,190 @@ import {MapboxOverlay} from '@deck.gl/mapbox';
 import mapboxgl from 'mapbox-gl';
 import MapboxLanguage from '@mapbox/mapbox-gl-language';
 import FastPriorityQueue from 'fastpriorityqueue';
+import {MinQueue} from "heapify";
+import Delaunator from 'delaunator';
+
+
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////  webgl class   정의       /////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+
+
+class DrawObject  {
+
+  constructor () {
+    this.vertexBO;
+    this.indexBO;
+    this.shader;
+    this.indexCount;
+
+    this.projectionMatrixLoc;
+    this.viewMatrixLoc;
+    this.lonLatUnitLoc;
+    this.textureCoordLoc;
+    this.info0;
+    this.info1;
+
+    this.vertexAttrib;
+
+    this.textureLoc0;
+    this.textureLoc1;
+
+    this.numObj;
+    this.numIndex;
+
+    this.posAttrLoc;
+    this.distAttrLoc;
+    // this.framebuffer;
+    // this.framebufferTexture;
+  }
+
+  createBuffer() {
+    this.vertexBO = gl.createBuffer();
+  }
+
+  
+  setVertexBufer() {
+    
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBO);
+    gl.bufferData(gl.ARRAY_BUFFER, 4 * 3 * this.numObj, gl.DYNAMIC_DRAW);
+    this.posAttrLoc = gl.getAttribLocation(this.shader, "pos"); 
+    this.distAttrLoc = gl.getAttribLocation(this.shader, "distance"); 
+    gl.enableVertexAttribArray(this.posAttrLoc);   
+    gl.enableVertexAttribArray(this.distAttrLoc);   
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+  }
+
+  setIndexBufer(indexArray) {
+
+    this.indexBO = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,  this.indexBO);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indexArray, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+    this.indexCount = indexArray.length;
+  }
+
+  setShader(vert, frag) {
+
+    // Create a vertex shader object
+    const vertShader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vertShader, vert);
+    gl.compileShader(vertShader);
+        
+    if (!gl.getShaderParameter(vertShader, gl.COMPILE_STATUS)) {
+        console.error(this, "vert:", gl.getShaderInfoLog(vertShader));
+    }
+    // Create fragment shader object
+    const fragShader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fragShader, frag); 
+    gl.compileShader(fragShader);
+
+    if (!gl.getShaderParameter(fragShader, gl.COMPILE_STATUS)) {
+      console.error(this, "frag:",gl.getShaderInfoLog(fragShader));
+    }
+
+    this.shader = gl.createProgram();
+    gl.attachShader(this.shader, vertShader);
+    gl.attachShader(this.shader, fragShader);
+    gl.linkProgram(this.shader);
+
+  }
+
+  /// set Uniforms
+  setProjectionViewMatrix( projStr, viewStr) {
+    this.projectionMatrixLoc = gl.getUniformLocation(this.shader, projStr);  
+    this.viewMatrixLoc = gl.getUniformLocation(this.shader, viewStr);  
+  }
+
+  setUniformLonLat(lonLatUnitStr) {
+    this.lonLatUnitLoc =  gl.getUniformLocation(this.shader, lonLatUnitStr);  
+  }
+
+
+  setUniformVar0(infoStr) {
+    this.info0 =  gl.getUniformLocation(this.shader, infoStr);  
+  }
+
+  setUniformVar1(infoStr) {
+    this.info1 =  gl.getUniformLocation(this.shader, infoStr);  
+  }
+
+  setVertexAttrib(attribStr) {
+    this.vertexAttrib = gl.getAttribLocation(this.shader, attribStr);     
+    gl.enableVertexAttribArray(this.vertexAttrib);
+  }
+
+  useShader() {
+    gl.useProgram(this.shader);  
+  }
+
+  bindElementBuffer() {
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBO);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBO);
+  }
+
+  bindUniform(__projectionMatrix, __viewMatrix) {
+
+    gl.uniformMatrix4fv(this.projectionMatrixLoc, false, __projectionMatrix);
+    gl.uniformMatrix4fv(this.viewMatrixLoc, false, __viewMatrix);
+  }
+
+  bindUniformLonLatUnit(lon, lat, unit, time) {
+    gl.uniform4f(this.lonLatUnitLoc, lon, lat, unit, time);
+  }
+
+  bindUniformVar0(zoomLevel) {
+    gl.uniform4f(this.info0, zoomLevel, 0.0, 0.0, 0.0);
+  }
+
+  bindUniformVar1(currentZoom) {
+    gl.uniform4i(this.info1, currentZoom, 0, 0, 0);
+  }
+
+  drawElement() {
+    gl.vertexAttribPointer(this.vertexAttrib, 3, gl.FLOAT, false, 0, 0); 
+    gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_SHORT,0);
+  }
+
+
+  drawArrayQuad(primitive, count) {
+    gl.drawArrays(primitive, 0, count);
+  }
+
+
+
+}
+
+
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+let gl;
+
+const canvas = document.getElementById('webglCanvas');
+
+
+const isochrone = new DrawObject();
+
+
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////  global Variables         /////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////
+
 
 TextLayer.fontAtlasCacheLimit = 10;
 
 mapboxgl.accessToken = 'pk.eyJ1Ijoic2JraW00MjciLCJhIjoiY2o4b3Q0aXd1MDdyMjMzbnRxYTdvdDZrbCJ9.GCHi6-mDGEkd3F-knzSfRQ';
-
-{
-  const top = 0;
-  const parent = i => ((i + 1) >>> 1) - 1;
-  const left = i => (i << 1) + 1;
-  const right = i => (i + 1) << 1;
-
-  class PriorityQueue {
-    constructor(comparator = (a, b) => a > b) {
-      this._heap = [];
-      this._comparator = comparator;
-    }
-    size() {
-      return this._heap.length;
-    }
-    isEmpty() {
-      return this.size() == 0;
-    }
-    peek() {
-      return this._heap[top];
-    }
-    push(...values) {
-      values.forEach(value => {
-        this._heap.push(value);
-        this._siftUp();
-      });
-      return this.size();
-    }
-    pop() {
-      const poppedValue = this.peek();
-      const bottom = this.size() - 1;
-      if (bottom > top) {
-        this._swap(top, bottom);
-      }
-      this._heap.pop();
-      this._siftDown();
-      return poppedValue;
-    }
-    replace(value) {
-      const replacedValue = this.peek();
-      this._heap[top] = value;
-      this._siftDown();
-      return replacedValue;
-    }
-    _greater(i, j) {
-      return this._comparator(this._heap[i], this._heap[j]);
-    }
-    _swap(i, j) {
-      [this._heap[i], this._heap[j]] = [this._heap[j], this._heap[i]];
-    }
-    _siftUp() {
-      let node = this.size() - 1;
-      while (node > top && this._greater(node, parent(node))) {
-        this._swap(node, parent(node));
-        node = parent(node);
-      }
-    }
-    _siftDown() {
-      let node = top;
-      while (
-        (left(node) < this.size() && this._greater(left(node), node)) ||
-        (right(node) < this.size() && this._greater(right(node), node))
-      ) {
-        let maxChild = (right(node) < this.size() && this._greater(right(node), left(node))) ? right(node) : left(node);
-        this._swap(node, maxChild);
-        node = maxChild;
-      }
-    }
-  }
-  window.PriorityQueue=PriorityQueue;
-}
-
-
-
 
 let currentZoom = 6;
 const map = createMap('container');
@@ -111,6 +217,19 @@ let canvas1 = document.getElementById('textCanvas');
 let solution = new Array();
 let predecessor = new Array();
 
+  //priority_queue<NodeQ, vector<NodeQ>, cmpQ> currentQueue;
+
+
+const currentQueue1 = new MinQueue(3000,[],[], Uint32Array, Float32Array);
+
+
+
+// Quadtree 생성
+let quadtree = d3.quadtree()
+  .x(d => d.x)  // x 좌표로 접근
+  .y(d => d.y)  // y 좌표로 접근
+
+let nearestPointMouse = 0;
 
 function createMap(containerID) {
   return  new mapboxgl.Map({
@@ -168,6 +287,35 @@ window.addEventListener("keydown", (e) => {
 });
 
 
+window.addEventListener("mousemove", (e) => {
+  //console.log(e);
+  const mousex = e.clientX;
+  const mousey = e.clientY;
+  const lngLat = map.unproject([mousex, mousey]);
+
+  let nearestPoint = quadtree.find(lngLat.lng, lngLat.lat);
+  nearestPointMouse = nearestPoint.id;
+
+
+  const startTime = performance.now();
+
+  resetNetwork();
+  //console.log(solution);
+  solveServiceAreaFromNode(nearestPointMouse, 300, graph);
+  const endTime = performance.now();
+  const executionTime = endTime - startTime;     
+  console.log(`실행 시간: ${executionTime}ms`);
+  //console.log(solution);
+
+
+  //console.log(nearestPoint);  
+
+  //console.log(lngLat);  // 변환된 경위도 좌표 출력
+
+
+  update();
+});
+
 window.addEventListener('resize', function() {
   const w = window.innerWidth, h = window.innerHeight;
 
@@ -187,6 +335,44 @@ function update() {
 
   const layers =  [
 
+    new ScatterplotLayer({
+      id: 'trafficNode',
+      data: nodeMap,
+      
+      // Styles
+      filled: true,
+
+      radiusMinPixels: 2,
+      //sizeMaxPixels: 10,
+      radiusScale: 1,
+      getPosition: d => [d.x, d.y],
+      getRadius: d => {
+        if (d.id ==nearestPointMouse) return 8;
+        else return 3;
+      },        
+      // onHover: (info) => {
+      //   showInfoBox(info);
+      // },
+      // onClick: (info) => {
+      //   showInfoBox(info);
+        
+      // },
+      pickable: true,
+      autoHighlight: true,
+      radiusUnits: 'pixels',
+      getFillColor: d => {
+        return [255, 20, 10];
+      },
+      updateTriggers: {
+        // This tells deck.gl to recalculate radius when `currentYear` changes
+        getRadius : [nearestPointMouse]       
+      },
+      // Interactive props      
+      visible : true,
+      //extensions: [new DataFilterExtension({filterSize: 1})],
+      //getFilterValue: d => [d.persons],
+      //filterRange: [[countFrom, countTo]],
+    }),
 
 
 
@@ -200,60 +386,6 @@ function update() {
  
 
 }
-
-
-
-//https://stackoverflow.com/questions/42919469/efficient-way-to-implement-priority-queue-in-javascript
-
-
-// Default comparison semantics
-const queue = new PriorityQueue();
-queue.push(10, 20, 30, 40, 50);
-console.log('Top:', queue.peek()); //=> 50
-console.log('Size:', queue.size()); //=> 5
-console.log('Contents:');
-while (!queue.isEmpty()) {
-  console.log(queue.pop()); //=> 40, 30, 20, 10
-}
-
-// Pairwise comparison semantics
-const pairwiseQueue = new PriorityQueue((a, b) => a[1] > b[1]);
-pairwiseQueue.push(['low', 0], ['medium', 5], ['high', 10]);
-console.log('\nContents:');
-while (!pairwiseQueue.isEmpty()) {
-  console.log(pairwiseQueue.pop()[0]); //=> 'high', 'medium', 'low'
-}
-
-
-//https://github.com/lemire/FastPriorityQueue.js/
-var x = new FastPriorityQueue();
-x.add(1);
-x.add(0);
-x.add(5);
-x.add(4);
-x.add(3);
-x.peek(); // should return 0, leaves x unchanged
-x.size; // should return 5, leaves x unchanged
-while (!x.isEmpty()) {
-  console.log(x.poll());
-} // will print 0 1 3 4 5
-x.trim(); // (optional) optimizes memory usag
-
-
-
-var x = new FastPriorityQueue(function(a, b) {
-  return a > b;
-});
-x.add(1);
-x.add(0);
-x.add(5);
-x.add(4);
-x.add(3);
-while (!x.isEmpty()) {
-  console.log(x.poll());
-} // will print 5 4 3 1 0
-
-
 
 
 let graph = {numNode : 0, numEdge : 0, rowOffset : 0, colIndex: 0, value : 0};
@@ -278,7 +410,8 @@ let nodeMap;
   
   nodeMap = new Array(nodeRaw.length);
   for (const d of nodeRaw) {
-    nodeMap[d.id] =  {x:d.x, y:d.y, canBeStartNode : d.canBeStartNode};
+    const pos = proj4('EPSG:5179','EPSG:4326',[d.x,d.y]);
+    nodeMap[d.id] =  {id: d.id, x : pos[0], y:pos[1], canBeStartNode : d.canBeStartNode};
   }
 
   const linkData = new Array();
@@ -296,11 +429,25 @@ let nodeMap;
       return a.fromNode - b.fromNode;
     }
   });
-  console.log(nodeMap, linkData);
+
   return {nodeMap, linkData};
 })().then( ({nodeMap, linkData}) => {
-  console.log(nodeMap, linkData);
+
+  quadtree.addAll(nodeMap);
+  //let nearestPoint = quadtree.find(127.045353, 37.514091);
+  //console.log(nearestPoint);  
+
+  //console.log(nodeMap, linkData);
   setCSRGraph(nodeMap, linkData);
+
+  initWebGL();
+  initIsochrone();
+
+
+
+
+  update();
+
   console.log(graph);
 
   const startNodes = [178016, 104452, 342160];
@@ -355,6 +502,66 @@ function resetNetwork() {
 
 //이제 프라이어리티 큐
 
+function solveServiceAreaFromNode_alt(startNode, timeDistance, graph)
+{
+
+  let i;
+  let startTime, endTime;
+  let currentNode, nextNodeId;
+  let scanBegin, scanEnd;
+  
+
+  const currentQueue0 = new FastPriorityQueue(function(a, b) {
+    return a.time < b.time;
+  });
+
+  //시작점의 정보를 입력
+
+  solution[startNode] = 0;
+  predecessor[startNode] = -1;
+  let ndq = { id:startNode, time:0 };
+  currentQueue0.add(ndq);
+  let maxSize = 0;
+
+  let cnt = 0;
+
+  while (!currentQueue0.isEmpty()) {
+
+    const currentNodeQ = currentQueue0.peek();
+    //console.log("currentNodeQ:",currentNodeQ);
+    currentNode = currentNodeQ.id;
+    startTime = currentNodeQ.time;
+
+    scanBegin = graph.rowOffset[currentNode];
+    scanEnd = graph.rowOffset[currentNode + 1];
+
+    //console.log(scanBegin, scanEnd);
+    for (i = scanBegin; i < scanEnd; i++) {
+
+      nextNodeId = graph.colIndex[i];
+
+      endTime = startTime + graph.value[i];			
+
+      if (endTime < timeDistance) {
+
+        if (solution[nextNodeId] > endTime) {
+          solution[nextNodeId] = endTime;
+          predecessor[nextNodeId] = currentNode;
+          ndq = { id:nextNodeId, time:endTime };
+          currentQueue0.add(ndq);
+          if (maxSize<currentQueue0.size) maxSize = currentQueue0.size;
+        }
+      }
+    }
+    currentQueue0.poll();
+    //console.log(currentQueue);
+    cnt++;
+  } //while currentQueue >0
+  console.log("cnt:",cnt);
+  console.log("maxSize:",maxSize);
+}
+
+//https://github.com/luciopaiva/heapify
 function solveServiceAreaFromNode(startNode, timeDistance, graph)
 {
 
@@ -364,24 +571,27 @@ function solveServiceAreaFromNode(startNode, timeDistance, graph)
   let scanBegin, scanEnd;
   
   //priority_queue<NodeQ, vector<NodeQ>, cmpQ> currentQueue;
-  const currentQueue = new FastPriorityQueue(function(a, b) {
-    return a.time < b.time;
-  });
+  //const currentQueue = new MinQueue(3000,[],[], Uint32Array, Float32Array);
+
+  currentQueue1.clear();
   //시작점의 정보를 입력
 
   solution[startNode] = 0;
   predecessor[startNode] = -1;
-  let ndq = { id:startNode, time:0 };
-  currentQueue.add(ndq);
+  //let ndq = { id:startNode, time:0 };
+  //currentQueue.add(ndq);
+  currentQueue1.push(startNode, 0);
+  let maxSize = 0;
 
   let cnt = 0;
 
-  while (!currentQueue.isEmpty()) {
+  while (currentQueue1.size>0) {
 
-    const currentNodeQ = currentQueue.peek();
+    currentNode = currentQueue1.peek();
+    startTime = currentQueue1.peekPriority();
     //console.log("currentNodeQ:",currentNodeQ);
-    currentNode = currentNodeQ.id;
-    startTime = currentNodeQ.time;
+    // currentNode = currentNodeQ.id;
+    // startTime = currentNodeQ.time;
 
     scanBegin = graph.rowOffset[currentNode];
     scanEnd = graph.rowOffset[currentNode + 1];
@@ -398,72 +608,317 @@ function solveServiceAreaFromNode(startNode, timeDistance, graph)
         if (solution[nextNodeId] > endTime) {
           solution[nextNodeId] = endTime;
           predecessor[nextNodeId] = currentNode;
-          ndq = { id:nextNodeId, time:endTime };
-          currentQueue.add(ndq);
+          //ndq = { id:nextNodeId, time:endTime };
+          currentQueue1.push(nextNodeId,endTime );
+          if (maxSize<currentQueue1.size) maxSize = currentQueue1.size;
         }
       }
     }
-    currentQueue.poll();
+    currentQueue1.pop();
     //console.log(currentQueue);
     cnt++;
   } //while currentQueue >0
   console.log("cnt:",cnt);
+  console.log("maxSize:",maxSize);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////
+
+
+function resize(canvas) {
+
+
+
+  // 브라우저에서 canvas가 표시되는 크기 탐색
+  var displayWidth = canvas.clientWidth;
+  var displayHeight = canvas.clientHeight;
+
+  // canvas가 같은 크기가 아닐 때 확인
+  if (canvas.width != displayWidth ||
+      canvas.height != displayHeight) {
+
+      // canvas를 동일한 크기로 수정
+      canvas.width = displayWidth;
+      canvas.height = displayHeight;
+  }
+
+
+}
+
+function initWebGL() {
+
+  try {
+    // Try to grab the standard context. If it fails, fallback to experimental.
+    gl = canvas.getContext("webgl2", { stencil: true });
+  }
+  catch (e) { }
+  
+  // If we don't have a GL context, give up now
+  if (!gl) {
+    alert("Unable to initialize WebGL. Your browser may not support it.");
+    gl = null;
+  }  
+  resize(canvas);
+
+
+
+}
+
+
+function initIsochrone() {
+
+  const dpoints = new Array(nodeMap.length);
+  //var position = new Array(nodeData.length*2);
+  //var distance = new Array(nodeData.length);
+  for (let i=0; i<nodeMap.length ; i++) {
+      dpoints[i] = [nodeMap[i].x, nodeMap[i].y];
+      //position[i*2+0] = nodeData[i].x;
+      //position[i*2+1] = nodeData[i].y;
+      //distance[i] = 999999;
+  }
+
+  const delaunay = Delaunator.from(dpoints);
+  //console.log(delaunay.triangles);
+  
+  const triangleIndex = new Uint32Array(delaunay.triangles.length);
+  for (var i=0 ; i<delaunay.triangles.length ; i++) {
+      triangleIndex[i] = delaunay.triangles[i];
+  }
+
+  console.log(delaunay);
+
+  isochrone.numObj = nodeMap.length;
+  isochrone.numIndex = delaunay.triangles.length;
+
+
+  const isochroneData = getIsochroneData();
+
+  isochrone.setShader(isochroneData.vert, isochroneData.frag);
+  isochrone.setProjectionViewMatrix("projection","view");
+  isochrone.setUniformLonLat("lonLatUnitTime");
+  isochrone.setUniformVar0("info0");
+  isochrone.setUniformVar1("info1");
+
+
+
+  isochrone.createBuffer();
+  isochrone.setVertexBufer();
+  isochrone.setIndexBufer(triangleIndex);
+
+
+  console.log("shader current!!");
+
 }
 
 
 
 
-function solveServiceAreaFromNode_alt(startNode, timeDistance, graph)
-{
+function getIsochroneData() {
 
-  let i;
-  let startTime, endTime;
-  let currentNode, nextNodeId;
-  let scanBegin, scanEnd;
+
+  const vert =`#version 300 es
+  #define PI 3.14159265358979323846
+  #define PI_4 0.785398163397448309615
+  #define DEGREES_TO_RADIANS 0.0174532925199432957
+  #define TILE_SIZE 512.0
+  #define C149_0 0.010204 //텍스쳐 좌표 주의!!
+  #define C149_1 0.989796 //텍스쳐 좌표 주의!!
+  uniform mat4 projection;
+  uniform mat4 view;
+  uniform vec4 lonLatUnitTime;
+  uniform vec4 textureCoord;
+
+  //uniform sampler2D texture0;
+  //uniform sampler2D texture1;
+
+  out vec2 vTexCoord;
+
+  vec2 lngLatToWorld(float lng, float lat) {
+    float lambda2 = lng * DEGREES_TO_RADIANS;
+    float phi2 = lat * DEGREES_TO_RADIANS;
+    float x = (TILE_SIZE * (lambda2 + PI)) / (2.0 * PI);
+    float y = (TILE_SIZE * (PI + log(tan(PI_4 + phi2 * 0.5)))) / (2.0 * PI);
+    return vec2(x, y);
+  }
+
+  vec4 vx = vec4(0.0, 1.0, 0.0, 1.0);
+  vec4 vy = vec4(0.0, 0.0, 1.0, 1.0);
+
+
+  //vec4 tx = vec4(C149_0, C149_1, C149_0, C149_1);
+  //vec4 ty = vec4(C149_0, C149_0, C149_1, C149_1);
+
+
+
+
+  void main() {
+
+    //vec4 raw0 = texture(texture0, vec2(0.5,0.5));
+
+    vec4 tx = vec4(textureCoord.x, textureCoord.z, textureCoord.x, textureCoord.z);
+    vec4 ty = vec4(textureCoord.y, textureCoord.y, textureCoord.w, textureCoord.w);
+
+    float x = vx[gl_VertexID];
+    float y = vy[gl_VertexID];
+    float posx = lonLatUnitTime.x + x * (lonLatUnitTime.z * 48.0);
+    float posy = lonLatUnitTime.y + y * (lonLatUnitTime.z * 48.0);
+    vec2 pos = lngLatToWorld(posx,posy);
+    gl_Position = projection * view * vec4(pos, 0.0, 1.0);
+    
+    float texx = tx[gl_VertexID];
+    float texy = ty[gl_VertexID];
+    vTexCoord = vec2(texx, texy);
+  }
+  `;
+  const frag =`#version 300 es
+  precision highp float;
+
+  in vec2 vTexCoord;
+  uniform sampler2D texture0;
+  uniform sampler2D texture1;
+  uniform vec4 lonLatUnitTime;
+  uniform ivec4 info1; //x:dataSelectedNum
+
+  vec4 mako[10] = vec4[](
+    vec4(36, 22, 42, 50),
+    vec4(56, 42, 84, 100),
+    vec4(63, 63, 128, 150),
+    vec4(56, 93, 154, 200),
+    vec4(52, 121, 161, 255),
+    vec4(52, 151, 168, 255),
+    vec4(61, 179, 172, 255),
+    vec4(98, 207, 172, 255),
+    vec4(170, 226, 189, 255),
+    vec4(218, 242, 225, 255)
+  );
+
+
+  vec4 inferno[10] =vec4[](
+    vec4(0, 0, 4, 50),
+    vec4(27, 12, 65, 100),
+    vec4(74, 12, 107, 150),
+    vec4(120, 28, 109, 200),
+    vec4(165, 44, 96, 255),
+    vec4(207, 68, 70, 255),
+    vec4(237, 105, 37, 255),
+    vec4(251, 155, 6, 255),
+    vec4(247, 209, 61, 255),
+    vec4(252, 255, 164, 255)
+  );
+
+  vec4 turbo[16] = vec4[](
+    vec4(48, 18, 59, 50),
+    vec4(64, 67, 166, 100),
+    vec4(70, 112, 232, 150),
+    vec4(62, 155, 254, 200),
+    vec4(33, 196, 225, 255),
+    vec4(26, 228, 182, 255),
+    vec4(70, 247, 131, 255),
+    vec4(135, 254, 77, 255),
+    vec4(185, 245, 52, 255),
+    vec4(225, 220, 55, 255),
+    vec4(249, 186, 56, 255),
+    vec4(253, 140, 39, 255),
+    vec4(239, 90, 17, 255),
+    vec4(214, 52, 5, 255),
+    vec4(174, 24, 1, 255),
+    vec4(122, 4, 2, 255)
+  );
   
-  //priority_queue<NodeQ, vector<NodeQ>, cmpQ> currentQueue;
-  const currentQueue = new PriorityQueue(function(a, b) {
-    return a.time < b.time;
-  });
-  //시작점의 정보를 입력
+  vec4 viridis[10] = vec4[](
+    vec4(68, 1, 84, 50),
+    vec4(72, 40, 120, 100),
+    vec4(62, 73, 137, 150),
+    vec4(49, 104, 142, 200),
+    vec4(38, 130, 142, 255),
+    vec4(31, 158, 137, 255),
+    vec4(53, 183, 121, 255),
+    vec4(110, 206, 88, 255),
+    vec4(181, 222, 43, 255),
+    vec4(253, 231, 37, 255)
+  );
 
-  solution[startNode] = 0;
-  predecessor[startNode] = -1;
-  let ndq = { id:startNode, time:0 };
-  currentQueue.push(ndq);
+  vec4 getGradient10(vec4[10] gradient, float t) {
+    int idx = int(t * 9.0);
+    float dt = fract(t * 9.0);
+    vec4 color0 = gradient[idx];
+    vec4 color1 = gradient[min(idx+1, 9)];
+    vec4 color = mix(color0, color1, dt) / 255.0;
+    return color;
+  }
 
-  let cnt = 0;
+  vec4 getGradient16(vec4[16] gradient, float t) {
+    int idx = int(t * 15.0);
+    float dt = fract(t * 15.0);
+    vec4 color0 = gradient[idx];
+    vec4 color1 = gradient[min(idx+1, 15)];
+    vec4 color = mix(color0, color1, dt) / 255.0;
+    return color;
+  }
+  
+  out vec4 outColor;
+  vec2 decodeUV(vec4 raw) {
+    float u = (raw.r *256.0*255.0 + raw.g * 255.0)-32767.0;
+    float v = (raw.b *256.0*255.0 + raw.a * 255.0)-32767.0;
+    return vec2(u / 10000.0, v/10000.0);
+  }
 
-  while (!currentQueue.isEmpty()) {
+  vec2 decodeSurfElevationTemperature(vec4 raw) {
+    float u = (raw.r *256.0*255.0 + raw.g * 255.0)-30000.0;    
+    float v = (raw.b *256.0*255.0 + raw.a * 255.0)-5000.0;    
+    return vec2(u/1000.0,v/1000.0); 
+  }
 
-    const currentNodeQ = currentQueue.peek();
-    //console.log("currentNodeQ:",currentNodeQ);
-    currentNode = currentNodeQ.id;
-    startTime = currentNodeQ.time;
+  
+  vec2 decodeSalinity(vec4 raw) {
+    float u = (raw.r *256.0*255.0 + raw.g * 255.0)-1000.0;    
+    float v = (raw.b *256.0*255.0 + raw.a * 255.0)-1000.0;    
+    return vec2(u/1000.0,v/1000.0); 
+  }
 
-    scanBegin = graph.rowOffset[currentNode];
-    scanEnd = graph.rowOffset[currentNode + 1];
-
-    //console.log(scanBegin, scanEnd);
-    for (i = scanBegin; i < scanEnd; i++) {
-
-      nextNodeId = graph.colIndex[i];
-
-      endTime = startTime + graph.value[i];			
-
-      if (endTime < timeDistance) {
-
-        if (solution[nextNodeId] > endTime) {
-          solution[nextNodeId] = endTime;
-          predecessor[nextNodeId] = currentNode;
-          ndq = { id:nextNodeId, time:endTime };
-          currentQueue.push(ndq);
-        }
-      }
+  void main(void) {
+    vec4 raw0 = texture(texture0, vTexCoord);
+    vec4 raw1 = texture(texture1, vTexCoord);
+    int category = info1.x;
+    vec4 c;
+    if (category == 0) {
+      vec2 uv0 = decodeUV(raw0); 
+      vec2 uv1 = decodeUV(raw1);
+      float t =  lonLatUnitTime.a; //0~1
+      vec2 uv = mix(uv0, uv1, t);
+      float strength = length(uv)/1.6;
+      c = getGradient10(mako, clamp(strength, 0.0, 1.0));
+      //c = getGradientMako(clamp(strength, 0.0, 1.0));
+    } else if (category == 1) {
+      vec2 uv0 = decodeSurfElevationTemperature(raw0); 
+      vec2 uv1 = decodeSurfElevationTemperature(raw1);
+      float t =  lonLatUnitTime.a; //0~1
+      vec2 uv = mix(uv0, uv1, t);
+      float strength = (uv.x+5.0)/10.0;
+      c = getGradient10(inferno, clamp(strength, 0.0, 1.0));
+    } else if (category == 2) {
+      vec2 uv0 = decodeSurfElevationTemperature(raw0); 
+      vec2 uv1 = decodeSurfElevationTemperature(raw1);
+      float t =  lonLatUnitTime.a; //0~1
+      vec2 uv = mix(uv0, uv1, t);
+      float strength = (uv.y+0.0)/30.0;
+      c = getGradient16(turbo, clamp(strength, 0.0, 1.0));
+    } else if (category == 3) {
+      vec2 uv0 = decodeSalinity(raw0); 
+      vec2 uv1 = decodeSalinity(raw1);
+      float t =  lonLatUnitTime.a; //0~1
+      vec2 uv = mix(uv0, uv1, t);
+      float strength = (uv.x+0.0)/40.0;
+      c = getGradient10(viridis, clamp(strength, 0.0, 1.0));
     }
-    currentQueue.pop();
-    //console.log(currentQueue);
-    cnt++;
-  } //while currentQueue >0
-  console.log("cnt:",cnt);
+    
+    outColor = c*vec4(1,1,1,0.8);
+  }
+
+  `;  
+
+  return {vert, frag};
 }
