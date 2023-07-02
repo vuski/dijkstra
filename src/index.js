@@ -1,16 +1,16 @@
 import {Deck}  from '@deck.gl/core';
 import {ScatterplotLayer, PathLayer,PolygonLayer,TextLayer, BitmapLayer, SolidPolygonLayer, GeoJsonLayer} from '@deck.gl/layers';
 import {DataFilterExtension} from '@deck.gl/extensions';
+import {WebMercatorViewport,} from '@deck.gl/core';
 import {CSVLoader} from '@loaders.gl/csv';
 import {JSONLoader} from '@loaders.gl/json'
 import {TileLayer} from '@deck.gl/geo-layers';
 import {load} from '@loaders.gl/core';
 import {MapboxOverlay} from '@deck.gl/mapbox';
 //const {JSONLoader, load} = json; 
-
+import { mat4 , vec4} from 'gl-matrix';
 import mapboxgl from 'mapbox-gl';
 import MapboxLanguage from '@mapbox/mapbox-gl-language';
-import FastPriorityQueue from 'fastpriorityqueue';
 import {MinQueue} from "heapify";
 import Delaunator from 'delaunator';
 
@@ -35,14 +35,10 @@ class DrawObject  {
     this.projectionMatrixLoc;
     this.viewMatrixLoc;
     this.lonLatUnitLoc;
-    this.textureCoordLoc;
+
     this.info0;
     this.info1;
-
     this.vertexAttrib;
-
-    this.textureLoc0;
-    this.textureLoc1;
 
     this.numObj;
     this.numIndex;
@@ -58,10 +54,12 @@ class DrawObject  {
   }
 
   
-  setVertexBufer() {
+  setVertexBufer(position) {
     
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBO);
     gl.bufferData(gl.ARRAY_BUFFER, 4 * 3 * this.numObj, gl.DYNAMIC_DRAW);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array(position));
+
     this.posAttrLoc = gl.getAttribLocation(this.shader, "pos"); 
     this.distAttrLoc = gl.getAttribLocation(this.shader, "distance"); 
     gl.enableVertexAttribArray(this.posAttrLoc);   
@@ -71,11 +69,17 @@ class DrawObject  {
 
   }
 
+  updateSolutionBuffer(solution) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBO);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 4 * 2 * this.numObj, new Float32Array(solution));
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  }
+
   setIndexBufer(indexArray) {
 
     this.indexBO = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,  this.indexBO);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indexArray, gl.STATIC_DRAW);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,  new Uint32Array(indexArray), gl.STATIC_DRAW);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
     this.indexCount = indexArray.length;
   }
@@ -134,10 +138,6 @@ class DrawObject  {
     gl.useProgram(this.shader);  
   }
 
-  bindElementBuffer() {
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBO);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBO);
-  }
 
   bindUniform(__projectionMatrix, __viewMatrix) {
 
@@ -157,9 +157,13 @@ class DrawObject  {
     gl.uniform4i(this.info1, currentZoom, 0, 0, 0);
   }
 
+
   drawElement() {
-    gl.vertexAttribPointer(this.vertexAttrib, 3, gl.FLOAT, false, 0, 0); 
-    gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_SHORT,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBO);
+    gl.vertexAttribPointer(this.posAttrLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(this.distAttrLoc, 1, gl.FLOAT, false, 0, 4*2* this.numObj);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBO);
+    gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT ,0);
   }
 
 
@@ -181,7 +185,7 @@ const canvas = document.getElementById('webglCanvas');
 
 
 const isochrone = new DrawObject();
-
+initWebGL();
 
 ///////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////
@@ -197,8 +201,59 @@ TextLayer.fontAtlasCacheLimit = 10;
 mapboxgl.accessToken = 'pk.eyJ1Ijoic2JraW00MjciLCJhIjoiY2o4b3Q0aXd1MDdyMjMzbnRxYTdvdDZrbCJ9.GCHi6-mDGEkd3F-knzSfRQ';
 
 let currentZoom = 6;
-const map = createMap('container');
+
+
+const map = new mapboxgl.Map({
+  container: 'container', // container ID
+  //style: 'mapbox://styles/mapbox/streets-v11', // style URL
+  style:  'mapbox://styles/sbkim427/cl6ool43r003o14kwmd8ogdwc',
+  center: [ 127.6, 35.7], // starting position [lng, lat]
+  zoom: 6, // starting zoom 
+  //projection: 'globe' // display the map as a 3D globe
+})
+
+const deckOverlay =  new MapboxOverlay({
+  //interleaved: false,
+  layers: []
+}); 
+
 initMap(map);
+
+function initMap(map) { 
+
+  //map.dragRotate.disable(); 
+  //map.touchZoomRotate.disableRotation();    
+  map.addControl(new MapboxLanguage({
+      defaultLanguage: 'ko'    
+    },
+  ));
+
+
+  deckOverlay.setProps({
+    onAfterRender: () => {
+      if (webglOnLoad) drawGLcontext();
+      //console.log('Render finished');
+    }
+  });
+
+  map.on('zoom', () => {
+  
+    update();
+  
+  });
+  map.on('move', () => {
+    
+  });
+  
+  map.addControl(deckOverlay);
+  
+// map.on('style.load', () => {
+//     map.setFog({}); // Set the default atmosphere style
+// });
+}
+
+
+
 
 const w0= window.innerWidth;
 const h0= window.innerHeight;
@@ -220,8 +275,9 @@ let predecessor = new Array();
   //priority_queue<NodeQ, vector<NodeQ>, cmpQ> currentQueue;
 
 
-const currentQueue1 = new MinQueue(3000,[],[], Uint32Array, Float32Array);
+const currentQueue = new MinQueue(3000,[],[], Uint32Array, Float32Array);
 
+let webglOnLoad = false;
 
 
 // Quadtree 생성
@@ -231,46 +287,10 @@ let quadtree = d3.quadtree()
 
 let nearestPointMouse = 0;
 
-function createMap(containerID) {
-  return  new mapboxgl.Map({
-      container: containerID, // container ID
-      //style: 'mapbox://styles/mapbox/streets-v11', // style URL
-      style:  'mapbox://styles/sbkim427/cl6ool43r003o14kwmd8ogdwc',
-      center: [ 127.6, 35.7], // starting position [lng, lat]
-      zoom: 6, // starting zoom 
-      //projection: 'globe' // display the map as a 3D globe
-  });    
-}
-
-function initMap(map) { 
-  //map.dragRotate.disable(); 
-  //map.touchZoomRotate.disableRotation();    
-  map.addControl(new MapboxLanguage({
-      defaultLanguage: 'ko'    
-    },
-  ));
-// map.on('style.load', () => {
-//     map.setFog({}); // Set the default atmosphere style
-// });
-}
-
-const deckOverlay =  new MapboxOverlay({
-  //interleaved: false,
-  layers: []
-}); 
-
-
-map.on('zoom', () => {
-  
-  update();
-
-});
-map.on('move', () => {
-  
-});
-
-//document.getElementById("container").onclick = update;
-map.addControl(deckOverlay);
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
 
 window.addEventListener("keydown", (e) => {
   console.log(e);
@@ -302,6 +322,7 @@ window.addEventListener("mousemove", (e) => {
   resetNetwork();
   //console.log(solution);
   solveServiceAreaFromNode(nearestPointMouse, 300, graph);
+  isochrone.updateSolutionBuffer(solution);
   const endTime = performance.now();
   const executionTime = endTime - startTime;     
   console.log(`실행 시간: ${executionTime}ms`);
@@ -440,7 +461,7 @@ let nodeMap;
   //console.log(nodeMap, linkData);
   setCSRGraph(nodeMap, linkData);
 
-  initWebGL();
+
   initIsochrone();
 
 
@@ -452,17 +473,17 @@ let nodeMap;
 
   const startNodes = [178016, 104452, 342160];
 
-  for (let startNode of  startNodes) {
-    const startTime = performance.now();
+  // for (let startNode of  startNodes) {
+  //   const startTime = performance.now();
 
-    resetNetwork();
-    //console.log(solution);
-    solveServiceAreaFromNode(startNode, 300, graph);
-    const endTime = performance.now();
-    const executionTime = endTime - startTime;     
-    console.log(`실행 시간: ${executionTime}ms`);
-    console.log(solution);
-  }
+  //   resetNetwork();
+  //   //console.log(solution);
+  //   solveServiceAreaFromNode(startNode, 300, graph);
+  //   const endTime = performance.now();
+  //   const executionTime = endTime - startTime;     
+  //   console.log(`실행 시간: ${executionTime}ms`);
+  //   console.log(solution);
+  // }
 }); 
 
 
@@ -494,72 +515,12 @@ function setCSRGraph(nodeMap, linkData) {
 
 function resetNetwork() {
 
-  solution = new Array(graph.numNode).fill(Number.MAX_SAFE_INTEGER);;
+  solution = new Float32Array(graph.numNode).fill(9999999999);;
   predecessor = new Array(graph.numNode).fill(Number.MAX_SAFE_INTEGER);
   
   
 }
 
-//이제 프라이어리티 큐
-
-function solveServiceAreaFromNode_alt(startNode, timeDistance, graph)
-{
-
-  let i;
-  let startTime, endTime;
-  let currentNode, nextNodeId;
-  let scanBegin, scanEnd;
-  
-
-  const currentQueue0 = new FastPriorityQueue(function(a, b) {
-    return a.time < b.time;
-  });
-
-  //시작점의 정보를 입력
-
-  solution[startNode] = 0;
-  predecessor[startNode] = -1;
-  let ndq = { id:startNode, time:0 };
-  currentQueue0.add(ndq);
-  let maxSize = 0;
-
-  let cnt = 0;
-
-  while (!currentQueue0.isEmpty()) {
-
-    const currentNodeQ = currentQueue0.peek();
-    //console.log("currentNodeQ:",currentNodeQ);
-    currentNode = currentNodeQ.id;
-    startTime = currentNodeQ.time;
-
-    scanBegin = graph.rowOffset[currentNode];
-    scanEnd = graph.rowOffset[currentNode + 1];
-
-    //console.log(scanBegin, scanEnd);
-    for (i = scanBegin; i < scanEnd; i++) {
-
-      nextNodeId = graph.colIndex[i];
-
-      endTime = startTime + graph.value[i];			
-
-      if (endTime < timeDistance) {
-
-        if (solution[nextNodeId] > endTime) {
-          solution[nextNodeId] = endTime;
-          predecessor[nextNodeId] = currentNode;
-          ndq = { id:nextNodeId, time:endTime };
-          currentQueue0.add(ndq);
-          if (maxSize<currentQueue0.size) maxSize = currentQueue0.size;
-        }
-      }
-    }
-    currentQueue0.poll();
-    //console.log(currentQueue);
-    cnt++;
-  } //while currentQueue >0
-  console.log("cnt:",cnt);
-  console.log("maxSize:",maxSize);
-}
 
 //https://github.com/luciopaiva/heapify
 function solveServiceAreaFromNode(startNode, timeDistance, graph)
@@ -573,22 +534,22 @@ function solveServiceAreaFromNode(startNode, timeDistance, graph)
   //priority_queue<NodeQ, vector<NodeQ>, cmpQ> currentQueue;
   //const currentQueue = new MinQueue(3000,[],[], Uint32Array, Float32Array);
 
-  currentQueue1.clear();
+  currentQueue.clear();
   //시작점의 정보를 입력
 
   solution[startNode] = 0;
   predecessor[startNode] = -1;
   //let ndq = { id:startNode, time:0 };
   //currentQueue.add(ndq);
-  currentQueue1.push(startNode, 0);
+  currentQueue.push(startNode, 0);
   let maxSize = 0;
 
   let cnt = 0;
 
-  while (currentQueue1.size>0) {
+  while (currentQueue.size>0) {
 
-    currentNode = currentQueue1.peek();
-    startTime = currentQueue1.peekPriority();
+    currentNode = currentQueue.peek();
+    startTime = currentQueue.peekPriority();
     //console.log("currentNodeQ:",currentNodeQ);
     // currentNode = currentNodeQ.id;
     // startTime = currentNodeQ.time;
@@ -609,12 +570,12 @@ function solveServiceAreaFromNode(startNode, timeDistance, graph)
           solution[nextNodeId] = endTime;
           predecessor[nextNodeId] = currentNode;
           //ndq = { id:nextNodeId, time:endTime };
-          currentQueue1.push(nextNodeId,endTime );
-          if (maxSize<currentQueue1.size) maxSize = currentQueue1.size;
+          currentQueue.push(nextNodeId,endTime );
+          if (maxSize<currentQueue.size) maxSize = currentQueue.size;
         }
       }
     }
-    currentQueue1.pop();
+    currentQueue.pop();
     //console.log(currentQueue);
     cnt++;
   } //while currentQueue >0
@@ -671,17 +632,17 @@ function initWebGL() {
 function initIsochrone() {
 
   const dpoints = new Array(nodeMap.length);
-  //var position = new Array(nodeData.length*2);
+  const position = new Float32Array(nodeMap.length*2);
   //var distance = new Array(nodeData.length);
   for (let i=0; i<nodeMap.length ; i++) {
       dpoints[i] = [nodeMap[i].x, nodeMap[i].y];
-      //position[i*2+0] = nodeData[i].x;
-      //position[i*2+1] = nodeData[i].y;
+      position[i*2+0] = nodeMap[i].x;
+      position[i*2+1] = nodeMap[i].y;
       //distance[i] = 999999;
   }
 
   const delaunay = Delaunator.from(dpoints);
-  //console.log(delaunay.triangles);
+  console.log(delaunay.triangles);
   
   const triangleIndex = new Uint32Array(delaunay.triangles.length);
   for (var i=0 ; i<delaunay.triangles.length ; i++) {
@@ -698,22 +659,71 @@ function initIsochrone() {
 
   isochrone.setShader(isochroneData.vert, isochroneData.frag);
   isochrone.setProjectionViewMatrix("projection","view");
-  isochrone.setUniformLonLat("lonLatUnitTime");
-  isochrone.setUniformVar0("info0");
-  isochrone.setUniformVar1("info1");
+  //isochrone.setUniformLonLat("lonLatUnitTime");
+  //isochrone.setUniformVar0("info0");
+  //isochrone.setUniformVar1("info1");
 
 
-
+  console.log("position:", position);
   isochrone.createBuffer();
-  isochrone.setVertexBufer();
+  isochrone.setVertexBufer(position);
   isochrone.setIndexBufer(triangleIndex);
 
 
   console.log("shader current!!");
-
+  webglOnLoad = true;
 }
 
+function  drawGLcontext() {
 
+  //console.log(deckOverlay._deck);
+  //console.log(map);
+  //const viewport = deckOverlay.getViewports()[0];
+
+  //const viewport = new WebMercatorViewport(deckOverlay._deck.viewManager.viewState);
+  const viewport = deckOverlay._deck.viewManager._viewports[0];
+  
+  const __projectionMatrix = mat4.create(); // 빈 mat4 행렬 생성
+  mat4.copy(__projectionMatrix, viewport.projectionMatrix);
+  const __viewMatrix = mat4.create(); // 빈 mat4 행렬 생성
+  mat4.copy(__viewMatrix, viewport.viewMatrix);
+
+  console.log(deckOverlay._deck);
+  console.log(viewport.projectionMatrix);
+  console.log(viewport.viewMatrix);
+
+  console.log(viewport.project([126.7, 36.7]));
+    
+  // Clear the canvas
+  // 스텐실 테스트를 활성화합니다.
+  //gl.enable(gl.STENCIL_TEST);
+  gl.disable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+
+  gl.clearColor(0,0,0.0,0.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT); 
+  gl.viewport(0,0,canvas.width,canvas.height);
+
+
+  // /////////////////////////////////////////////////////////////
+  // // 배경 그라데이션 이미지 그리기
+  isochrone.useShader();
+  isochrone.bindUniform(__projectionMatrix, __viewMatrix);
+  
+
+  // isochrone.bindUniformLonLatUnit(d0.lon, d0.lat, d0.unit, time);
+  // isochrone.bindUniformTextureCoord(coord.xmin, coord.ymin, coord.xmax, coord.ymax);
+  // isochrone.bindTwoTextures( textureWhole0[vidx],  textureWhole1[vidx]);   
+  isochrone.drawElement();
+
+
+
+
+
+
+}
 
 
 function getIsochroneData() {
@@ -724,17 +734,18 @@ function getIsochroneData() {
   #define PI_4 0.785398163397448309615
   #define DEGREES_TO_RADIANS 0.0174532925199432957
   #define TILE_SIZE 512.0
-  #define C149_0 0.010204 //텍스쳐 좌표 주의!!
-  #define C149_1 0.989796 //텍스쳐 좌표 주의!!
+
+  in vec2 pos;
+  in float distance;
+
+
   uniform mat4 projection;
   uniform mat4 view;
-  uniform vec4 lonLatUnitTime;
-  uniform vec4 textureCoord;
+  //uniform vec4 lonLatUnitTime;
 
-  //uniform sampler2D texture0;
-  //uniform sampler2D texture1;
 
-  out vec2 vTexCoord;
+
+  out float dist;
 
   vec2 lngLatToWorld(float lng, float lat) {
     float lambda2 = lng * DEGREES_TO_RADIANS;
@@ -744,49 +755,30 @@ function getIsochroneData() {
     return vec2(x, y);
   }
 
-  vec4 vx = vec4(0.0, 1.0, 0.0, 1.0);
-  vec4 vy = vec4(0.0, 0.0, 1.0, 1.0);
-
-
-  //vec4 tx = vec4(C149_0, C149_1, C149_0, C149_1);
-  //vec4 ty = vec4(C149_0, C149_0, C149_1, C149_1);
 
 
 
+  void main() {    
 
-  void main() {
+    vec2 posWorld = lngLatToWorld(pos.x,pos.y);
+    gl_Position = projection * view * vec4(posWorld, 0.0, 1.0);    
 
-    //vec4 raw0 = texture(texture0, vec2(0.5,0.5));
-
-    vec4 tx = vec4(textureCoord.x, textureCoord.z, textureCoord.x, textureCoord.z);
-    vec4 ty = vec4(textureCoord.y, textureCoord.y, textureCoord.w, textureCoord.w);
-
-    float x = vx[gl_VertexID];
-    float y = vy[gl_VertexID];
-    float posx = lonLatUnitTime.x + x * (lonLatUnitTime.z * 48.0);
-    float posy = lonLatUnitTime.y + y * (lonLatUnitTime.z * 48.0);
-    vec2 pos = lngLatToWorld(posx,posy);
-    gl_Position = projection * view * vec4(pos, 0.0, 1.0);
-    
-    float texx = tx[gl_VertexID];
-    float texy = ty[gl_VertexID];
-    vTexCoord = vec2(texx, texy);
+    dist = distance;
   }
   `;
   const frag =`#version 300 es
   precision highp float;
 
-  in vec2 vTexCoord;
-  uniform sampler2D texture0;
-  uniform sampler2D texture1;
-  uniform vec4 lonLatUnitTime;
-  uniform ivec4 info1; //x:dataSelectedNum
+  in float dist;
+
+
+  //uniform ivec4 info1;
 
   vec4 mako[10] = vec4[](
-    vec4(36, 22, 42, 50),
-    vec4(56, 42, 84, 100),
-    vec4(63, 63, 128, 150),
-    vec4(56, 93, 154, 200),
+    vec4(36, 22, 42, 255),
+    vec4(56, 42, 84, 255),
+    vec4(63, 63, 128, 255),
+    vec4(56, 93, 154, 255),
     vec4(52, 121, 161, 255),
     vec4(52, 151, 168, 255),
     vec4(61, 179, 172, 255),
@@ -842,6 +834,7 @@ function getIsochroneData() {
   );
 
   vec4 getGradient10(vec4[10] gradient, float t) {
+    t = float(int(t*9.0)) / 9.0;
     int idx = int(t * 9.0);
     float dt = fract(t * 9.0);
     vec4 color0 = gradient[idx];
@@ -860,62 +853,36 @@ function getIsochroneData() {
   }
   
   out vec4 outColor;
-  vec2 decodeUV(vec4 raw) {
-    float u = (raw.r *256.0*255.0 + raw.g * 255.0)-32767.0;
-    float v = (raw.b *256.0*255.0 + raw.a * 255.0)-32767.0;
-    return vec2(u / 10000.0, v/10000.0);
-  }
-
-  vec2 decodeSurfElevationTemperature(vec4 raw) {
-    float u = (raw.r *256.0*255.0 + raw.g * 255.0)-30000.0;    
-    float v = (raw.b *256.0*255.0 + raw.a * 255.0)-5000.0;    
-    return vec2(u/1000.0,v/1000.0); 
-  }
-
-  
-  vec2 decodeSalinity(vec4 raw) {
-    float u = (raw.r *256.0*255.0 + raw.g * 255.0)-1000.0;    
-    float v = (raw.b *256.0*255.0 + raw.a * 255.0)-1000.0;    
-    return vec2(u/1000.0,v/1000.0); 
-  }
 
   void main(void) {
-    vec4 raw0 = texture(texture0, vTexCoord);
-    vec4 raw1 = texture(texture1, vTexCoord);
-    int category = info1.x;
-    vec4 c;
-    if (category == 0) {
-      vec2 uv0 = decodeUV(raw0); 
-      vec2 uv1 = decodeUV(raw1);
-      float t =  lonLatUnitTime.a; //0~1
-      vec2 uv = mix(uv0, uv1, t);
-      float strength = length(uv)/1.6;
-      c = getGradient10(mako, clamp(strength, 0.0, 1.0));
-      //c = getGradientMako(clamp(strength, 0.0, 1.0));
-    } else if (category == 1) {
-      vec2 uv0 = decodeSurfElevationTemperature(raw0); 
-      vec2 uv1 = decodeSurfElevationTemperature(raw1);
-      float t =  lonLatUnitTime.a; //0~1
-      vec2 uv = mix(uv0, uv1, t);
-      float strength = (uv.x+5.0)/10.0;
-      c = getGradient10(inferno, clamp(strength, 0.0, 1.0));
-    } else if (category == 2) {
-      vec2 uv0 = decodeSurfElevationTemperature(raw0); 
-      vec2 uv1 = decodeSurfElevationTemperature(raw1);
-      float t =  lonLatUnitTime.a; //0~1
-      vec2 uv = mix(uv0, uv1, t);
-      float strength = (uv.y+0.0)/30.0;
-      c = getGradient16(turbo, clamp(strength, 0.0, 1.0));
-    } else if (category == 3) {
-      vec2 uv0 = decodeSalinity(raw0); 
-      vec2 uv1 = decodeSalinity(raw1);
-      float t =  lonLatUnitTime.a; //0~1
-      vec2 uv = mix(uv0, uv1, t);
-      float strength = (uv.x+0.0)/40.0;
-      c = getGradient10(viridis, clamp(strength, 0.0, 1.0));
+
+    float strength = dist /300.0;
+    if (strength>1.0) {
+      discard;
+    } else {
+      int category = 0;//info1.x;
+      vec4 c;
+      if (category == 0) {
+
+        
+        c = getGradient10(mako, clamp(strength, 0.0, 1.0));
+
+      } else if (category == 1) {
+
+
+        c = getGradient10(inferno, clamp(strength, 0.0, 1.0));
+      } else if (category == 2) {
+
+
+        c = getGradient16(turbo, clamp(strength, 0.0, 1.0));
+      } else if (category == 3) {
+
+
+        c = getGradient10(viridis, clamp(strength, 0.0, 1.0));
+      }
+      
+      outColor = c*vec4(1,1,1,1.0);
     }
-    
-    outColor = c*vec4(1,1,1,0.8);
   }
 
   `;  
