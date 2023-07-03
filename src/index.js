@@ -49,13 +49,11 @@ class DrawObject  {
     // this.framebufferTexture;
   }
 
-  createBuffer() {
-    this.vertexBO = gl.createBuffer();
-  }
+
 
   
   setVertexBufer(position) {
-    
+    this.vertexBO = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBO);
     gl.bufferData(gl.ARRAY_BUFFER, 4 * 3 * this.numObj, gl.DYNAMIC_DRAW);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array(position));
@@ -149,12 +147,12 @@ class DrawObject  {
     gl.uniform4f(this.lonLatUnitLoc, lon, lat, unit, time);
   }
 
-  bindUniformVar0(zoomLevel) {
-    gl.uniform4f(this.info0, zoomLevel, 0.0, 0.0, 0.0);
+  bindUniformVar0(currentTime, currentTimeLimit) {
+    gl.uniform4f(this.info0, currentTime, currentTimeLimit, 0.0, 0.0);
   }
 
-  bindUniformVar1(currentZoom) {
-    gl.uniform4i(this.info1, currentZoom, 0, 0, 0);
+  bindUniformVar1(gradientType) {
+    gl.uniform4i(this.info1, gradientType, 0, 0, 0);
   }
 
 
@@ -166,6 +164,15 @@ class DrawObject  {
     gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT ,0);
   }
 
+  bindVertexBuffer() {
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBO);
+    gl.vertexAttribPointer(this.posAttrLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(this.distAttrLoc, 1, gl.FLOAT, false, 0, 4*2* this.numObj);
+  }
+  drawLineElement() {
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBO);
+    gl.drawElements(gl.LINES, this.indexCount, gl.UNSIGNED_INT ,0);
+  }
 
   drawArrayQuad(primitive, count) {
     gl.drawArrays(primitive, 0, count);
@@ -182,9 +189,10 @@ class DrawObject  {
 let gl;
 
 const canvas = document.getElementById('webglCanvas');
-
+//const canvas = document.getElementById('container');
 
 const isochrone = new DrawObject();
+const isochroneLine = new DrawObject();
 initWebGL();
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -238,7 +246,7 @@ function initMap(map) {
 
   map.on('zoom', () => {
   
-    update();
+    //renderDeckGL();
   
   });
   map.on('move', () => {
@@ -278,7 +286,7 @@ let predecessor = new Array();
 const currentQueue = new MinQueue(3000,[],[], Uint32Array, Float32Array);
 
 let webglOnLoad = false;
-
+let currentTime = 0.0;
 
 // Quadtree 생성
 let quadtree = d3.quadtree()
@@ -286,6 +294,8 @@ let quadtree = d3.quadtree()
   .y(d => d.y)  // y 좌표로 접근
 
 let nearestPointMouse = 0;
+let animationID;
+let gradientType = 0;
 
 /////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////
@@ -295,7 +305,8 @@ let nearestPointMouse = 0;
 window.addEventListener("keydown", (e) => {
   console.log(e);
   if (e.key=='1') {
-   
+    gradientType++;
+    gradientType = gradientType % 4;
   }
   if (e.key=='2') {
    
@@ -303,7 +314,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key=='3') {
     
   }
-  update();
+  //renderDeckGL();
 });
 
 
@@ -317,24 +328,24 @@ window.addEventListener("mousemove", (e) => {
   nearestPointMouse = nearestPoint.id;
 
 
-  const startTime = performance.now();
+  //const startTime = performance.now();
 
   resetNetwork();
   //console.log(solution);
-  solveServiceAreaFromNode(nearestPointMouse, 300, graph);
+  solveServiceAreaFromNode(nearestPointMouse, currentTimeLimit, graph);
   isochrone.updateSolutionBuffer(solution);
-  const endTime = performance.now();
-  const executionTime = endTime - startTime;     
-  console.log(`실행 시간: ${executionTime}ms`);
+  //const endTime = performance.now();
+  //const executionTime = endTime - startTime;     
+  //console.log(`실행 시간: ${executionTime}ms`);
   //console.log(solution);
-
+  currentTime = 0.0;
 
   //console.log(nearestPoint);  
 
   //console.log(lngLat);  // 변환된 경위도 좌표 출력
 
 
-  update();
+  //renderDeckGL();
 });
 
 window.addEventListener('resize', function() {
@@ -348,11 +359,23 @@ window.addEventListener('resize', function() {
   d3.select("#popupText")
       .attr("width", w)
       .attr("height", h);  
-  update();
+  //update();
 });
 
+let addTimeUnit = 2.0;
+let currentTimeLimit = 300;
+function renderAll() {
 
-function update() {
+  currentTime += addTimeUnit;
+  if (currentTime > currentTimeLimit) currentTime = 0;
+
+  renderDeckGL();
+  
+  animationID = requestAnimationFrame(renderAll);
+
+}
+
+function renderDeckGL() {
 
   const layers =  [
 
@@ -363,13 +386,13 @@ function update() {
       // Styles
       filled: true,
 
-      radiusMinPixels: 2,
+      radiusMinPixels: 1,
       //sizeMaxPixels: 10,
       radiusScale: 1,
       getPosition: d => [d.x, d.y],
       getRadius: d => {
         if (d.id ==nearestPointMouse) return 8;
-        else return 3;
+        else return 1;
       },        
       // onHover: (info) => {
       //   showInfoBox(info);
@@ -382,14 +405,14 @@ function update() {
       autoHighlight: true,
       radiusUnits: 'pixels',
       getFillColor: d => {
-        return [255, 20, 10];
+        return [30, 20, 10];
       },
       updateTriggers: {
         // This tells deck.gl to recalculate radius when `currentYear` changes
         getRadius : [nearestPointMouse]       
       },
       // Interactive props      
-      visible : true,
+      visible : false,
       //extensions: [new DataFilterExtension({filterSize: 1})],
       //getFilterValue: d => [d.persons],
       //filterRange: [[countFrom, countTo]],
@@ -412,7 +435,7 @@ function update() {
 let graph = {numNode : 0, numEdge : 0, rowOffset : 0, colIndex: 0, value : 0};
 
 let nodeMap;
-
+let linkMap;
 
 (async function loadData() {
   const nodeRaw = await load("./data/node.tsv", CSVLoader, {
@@ -436,9 +459,14 @@ let nodeMap;
   }
 
   const linkData = new Array();
+  linkMap = new Uint32Array(linkRaw.length*2); //webgl draw용
+  let idx = 0;
   for (const d of linkRaw) {
     linkData.push({fromNode:d.fromNode, toNode:d.toNode, time : d.timeFT});
     linkData.push({fromNode:d.toNode, toNode:d.fromNode, time : d.timeTF});
+
+    linkMap[idx++] = d.fromNode;
+    linkMap[idx++] = d.toNode;
   }
 
   linkData.sort((a, b) => {
@@ -454,24 +482,25 @@ let nodeMap;
   return {nodeMap, linkData};
 })().then( ({nodeMap, linkData}) => {
 
-  quadtree.addAll(nodeMap);
+  //노드를 검색해야 하므로 쿼드트리에 집어넣기
+  const nodeMap_beginable = new Array();
+  for (let node of nodeMap) {
+    if (node.canBeStartNode==1) nodeMap_beginable.push(node);
+  }
+  quadtree.addAll(nodeMap_beginable);
   //let nearestPoint = quadtree.find(127.045353, 37.514091);
   //console.log(nearestPoint);  
 
   //console.log(nodeMap, linkData);
   setCSRGraph(nodeMap, linkData);
 
-
   initIsochrone();
 
+  
+  animationID = requestAnimationFrame(renderAll); 
+  //console.log(graph);
 
-
-
-  update();
-
-  console.log(graph);
-
-  const startNodes = [178016, 104452, 342160];
+  //const startNodes = [178016, 104452, 342160];
 
   // for (let startNode of  startNodes) {
   //   const startTime = performance.now();
@@ -579,8 +608,8 @@ function solveServiceAreaFromNode(startNode, timeDistance, graph)
     //console.log(currentQueue);
     cnt++;
   } //while currentQueue >0
-  console.log("cnt:",cnt);
-  console.log("maxSize:",maxSize);
+  //console.log("cnt:",cnt);
+ // console.log("maxSize:",maxSize);
 }
 
 
@@ -642,32 +671,41 @@ function initIsochrone() {
   }
 
   const delaunay = Delaunator.from(dpoints);
-  console.log(delaunay.triangles);
+  //console.log(delaunay.triangles);
   
   const triangleIndex = new Uint32Array(delaunay.triangles.length);
   for (var i=0 ; i<delaunay.triangles.length ; i++) {
       triangleIndex[i] = delaunay.triangles[i];
   }
 
-  console.log(delaunay);
+  //console.log(delaunay);
 
   isochrone.numObj = nodeMap.length;
-  isochrone.numIndex = delaunay.triangles.length;
-
 
   const isochroneData = getIsochroneData();
 
   isochrone.setShader(isochroneData.vert, isochroneData.frag);
   isochrone.setProjectionViewMatrix("projection","view");
   //isochrone.setUniformLonLat("lonLatUnitTime");
-  //isochrone.setUniformVar0("info0");
-  //isochrone.setUniformVar1("info1");
-
-
-  console.log("position:", position);
-  isochrone.createBuffer();
+  isochrone.setUniformVar0("info0");
+  isochrone.setUniformVar1("info1");
+  //console.log("position:", position);
   isochrone.setVertexBufer(position);
   isochrone.setIndexBufer(triangleIndex);
+
+
+
+
+
+
+  isochroneLine.numObj = nodeMap.length;
+  const isochroneLineData = getIsochroneLineData();
+
+  isochroneLine.setShader(isochroneLineData.vert, isochroneLineData.frag);
+  isochroneLine.setProjectionViewMatrix("projection","view");
+  isochroneLine.setUniformVar0("info0");
+  isochroneLine.setUniformVar1("info1");
+  isochroneLine.setIndexBufer(linkMap);
 
 
   console.log("shader current!!");
@@ -688,11 +726,11 @@ function  drawGLcontext() {
   const __viewMatrix = mat4.create(); // 빈 mat4 행렬 생성
   mat4.copy(__viewMatrix, viewport.viewMatrix);
 
-  console.log(deckOverlay._deck);
-  console.log(viewport.projectionMatrix);
-  console.log(viewport.viewMatrix);
+  //console.log(deckOverlay._deck);
+  //console.log(viewport.projectionMatrix);
+  //console.log(viewport.viewMatrix);
 
-  console.log(viewport.project([126.7, 36.7]));
+  //console.log(viewport.project([126.7, 36.7]));
     
   // Clear the canvas
   // 스텐실 테스트를 활성화합니다.
@@ -709,18 +747,26 @@ function  drawGLcontext() {
 
   // /////////////////////////////////////////////////////////////
   // // 배경 그라데이션 이미지 그리기
-  isochrone.useShader();
-  isochrone.bindUniform(__projectionMatrix, __viewMatrix);
+  if (true) {
+    isochrone.useShader();
+    isochrone.bindUniform(__projectionMatrix, __viewMatrix);  
+    isochrone.bindUniformVar0(currentTime, currentTimeLimit);
+    isochrone.bindUniformVar1(gradientType);
+    isochrone.drawElement();
+  }
+
+
+  isochroneLine.useShader();
+  isochroneLine.bindUniform(__projectionMatrix, __viewMatrix);
   
 
   // isochrone.bindUniformLonLatUnit(d0.lon, d0.lat, d0.unit, time);
   // isochrone.bindUniformTextureCoord(coord.xmin, coord.ymin, coord.xmax, coord.ymax);
   // isochrone.bindTwoTextures( textureWhole0[vidx],  textureWhole1[vidx]);   
-  isochrone.drawElement();
-
-
-
-
+  isochroneLine.bindUniformVar0(currentTime, currentTimeLimit);
+  isochroneLine.bindUniformVar1(gradientType);
+  isochrone.bindVertexBuffer();
+  isochroneLine.drawLineElement();
 
 
 }
@@ -772,7 +818,8 @@ function getIsochroneData() {
   in float dist;
 
 
-  //uniform ivec4 info1;
+  uniform vec4 info0;
+  uniform ivec4 info1;
 
   vec4 mako[10] = vec4[](
     vec4(36, 22, 42, 255),
@@ -844,6 +891,7 @@ function getIsochroneData() {
   }
 
   vec4 getGradient16(vec4[16] gradient, float t) {
+    t = float(int(t*9.0)) / 9.0;
     int idx = int(t * 15.0);
     float dt = fract(t * 15.0);
     vec4 color0 = gradient[idx];
@@ -856,11 +904,12 @@ function getIsochroneData() {
 
   void main(void) {
 
-    float strength = dist /300.0;
+    float currentTimeLimit = info0.y;
+    float strength = dist /currentTimeLimit;
     if (strength>1.0) {
       discard;
     } else {
-      int category = 0;//info1.x;
+      int category = info1.x;
       vec4 c;
       if (category == 0) {
 
@@ -881,7 +930,7 @@ function getIsochroneData() {
         c = getGradient10(viridis, clamp(strength, 0.0, 1.0));
       }
       
-      outColor = c*vec4(1,1,1,1.0);
+      outColor = c*vec4(1,1,1,0.95);
     }
   }
 
@@ -889,3 +938,174 @@ function getIsochroneData() {
 
   return {vert, frag};
 }
+
+
+
+function getIsochroneLineData() {
+
+
+  const vert =`#version 300 es
+  #define PI 3.14159265358979323846
+  #define PI_4 0.785398163397448309615
+  #define DEGREES_TO_RADIANS 0.0174532925199432957
+  #define TILE_SIZE 512.0
+
+  in vec2 pos;
+  in float distance;
+
+
+  uniform mat4 projection;
+  uniform mat4 view;
+  //uniform vec4 lonLatUnitTime;
+
+
+
+  out float dist;
+
+  vec2 lngLatToWorld(float lng, float lat) {
+    float lambda2 = lng * DEGREES_TO_RADIANS;
+    float phi2 = lat * DEGREES_TO_RADIANS;
+    float x = (TILE_SIZE * (lambda2 + PI)) / (2.0 * PI);
+    float y = (TILE_SIZE * (PI + log(tan(PI_4 + phi2 * 0.5)))) / (2.0 * PI);
+    return vec2(x, y);
+  }
+
+
+
+
+  void main() {    
+
+    vec2 posWorld = lngLatToWorld(pos.x,pos.y);
+    gl_Position = projection * view * vec4(posWorld, 0.0, 1.0);    
+
+    dist = distance;
+  }
+  `;
+  const frag =`#version 300 es
+  precision highp float;
+
+  in float dist;
+
+
+  uniform vec4 info0;
+  uniform ivec4 info1;
+
+  vec4 mako[10] = vec4[](
+    vec4(36, 22, 42, 255),
+    vec4(56, 42, 84, 255),
+    vec4(63, 63, 128, 255),
+    vec4(56, 93, 154, 255),
+    vec4(52, 121, 161, 255),
+    vec4(52, 151, 168, 255),
+    vec4(61, 179, 172, 255),
+    vec4(98, 207, 172, 255),
+    vec4(170, 226, 189, 255),
+    vec4(218, 242, 225, 255)
+  );
+
+
+  vec4 inferno[10] =vec4[](
+    vec4(0, 0, 4, 255),
+    vec4(27, 12, 65, 255),
+    vec4(74, 12, 107, 255),
+    vec4(120, 28, 109, 255),
+    vec4(165, 44, 96, 255),
+    vec4(207, 68, 70, 255),
+    vec4(237, 105, 37, 255),
+    vec4(251, 155, 6, 255),
+    vec4(247, 209, 61, 255),
+    vec4(252, 255, 164, 255)
+  );
+
+  vec4 turbo[16] = vec4[](
+    vec4(48, 18, 59, 255),
+    vec4(64, 67, 166, 255),
+    vec4(70, 112, 232, 255),
+    vec4(62, 155, 254, 255),
+    vec4(33, 196, 225, 255),
+    vec4(26, 228, 182, 255),
+    vec4(70, 247, 131, 255),
+    vec4(135, 254, 77, 255),
+    vec4(185, 245, 52, 255),
+    vec4(225, 220, 55, 255),
+    vec4(249, 186, 56, 255),
+    vec4(253, 140, 39, 255),
+    vec4(239, 90, 17, 255),
+    vec4(214, 52, 5, 255),
+    vec4(174, 24, 1, 255),
+    vec4(122, 4, 2, 255)
+  );
+  
+  vec4 viridis[10] = vec4[](
+    vec4(68, 1, 84, 255),
+    vec4(72, 40, 120, 255),
+    vec4(62, 73, 137, 255),
+    vec4(49, 104, 142, 255),
+    vec4(38, 130, 142, 255),
+    vec4(31, 158, 137, 255),
+    vec4(53, 183, 121, 255),
+    vec4(110, 206, 88, 255),
+    vec4(181, 222, 43, 255),
+    vec4(253, 231, 37, 255)
+  );
+
+  vec4 getGradient10(vec4[10] gradient, float t) {
+    t = float(int(t*9.0)) / 9.0;
+    int idx = int(t * 9.0);
+    float dt = fract(t * 9.0);
+    vec4 color0 = gradient[idx];
+    vec4 color1 = gradient[min(idx+1, 9)];
+    vec4 color = mix(color0, color1, dt) / 255.0;
+    return color;
+  }
+
+  vec4 getGradient16(vec4[16] gradient, float t) {
+    int idx = int(t * 15.0);
+    float dt = fract(t * 15.0);
+    vec4 color0 = gradient[idx];
+    vec4 color1 = gradient[min(idx+1, 15)];
+    vec4 color = mix(color0, color1, dt) / 255.0;
+    return color;
+  }
+  
+  out vec4 outColor;
+
+  void main(void) {
+
+    float currentTime = info0.x;
+    float currentTimeLimit = info0.y;
+    float alpha = dist / currentTime; 
+    float strength = dist /currentTimeLimit;
+    if (strength>1.0 || currentTime < dist) {
+      discard;
+    } else {
+      int category = info1.x;
+      vec4 c;
+      if (category == 0) {
+
+        
+        c = getGradient10(mako, clamp(strength, 0.0, 1.0));
+
+      } else if (category == 1) {
+
+
+        c = getGradient10(inferno, clamp(strength, 0.0, 1.0));
+      } else if (category == 2) {
+
+
+        c = getGradient16(turbo, clamp(strength, 0.0, 1.0));
+      } else if (category == 3) {
+
+
+        c = getGradient10(viridis, clamp(strength, 0.0, 1.0));
+      }
+      
+      outColor = c*vec4(0.6,0.6,0.6,alpha);
+    }
+  }
+
+  `;  
+
+  return {vert, frag};
+}
+
