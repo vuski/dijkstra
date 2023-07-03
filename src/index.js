@@ -822,7 +822,7 @@ function getIsochroneData() {
   uniform ivec4 info1;
 
   vec4 mako[10] = vec4[](
-    vec4(36, 22, 42, 255),
+    vec4(36, 22, 42, 250),
     vec4(56, 42, 84, 255),
     vec4(63, 63, 128, 255),
     vec4(56, 93, 154, 255),
@@ -837,9 +837,9 @@ function getIsochroneData() {
 
   vec4 inferno[10] =vec4[](
     vec4(0, 0, 4, 50),
-    vec4(27, 12, 65, 100),
-    vec4(74, 12, 107, 150),
-    vec4(120, 28, 109, 200),
+    vec4(27, 12, 65, 255),
+    vec4(74, 12, 107, 255),
+    vec4(120, 28, 109, 255),
     vec4(165, 44, 96, 255),
     vec4(207, 68, 70, 255),
     vec4(237, 105, 37, 255),
@@ -850,9 +850,9 @@ function getIsochroneData() {
 
   vec4 turbo[16] = vec4[](
     vec4(48, 18, 59, 50),
-    vec4(64, 67, 166, 100),
-    vec4(70, 112, 232, 150),
-    vec4(62, 155, 254, 200),
+    vec4(64, 67, 166, 255),
+    vec4(70, 112, 232, 255),
+    vec4(62, 155, 254, 255),
     vec4(33, 196, 225, 255),
     vec4(26, 228, 182, 255),
     vec4(70, 247, 131, 255),
@@ -869,9 +869,9 @@ function getIsochroneData() {
   
   vec4 viridis[10] = vec4[](
     vec4(68, 1, 84, 50),
-    vec4(72, 40, 120, 100),
-    vec4(62, 73, 137, 150),
-    vec4(49, 104, 142, 200),
+    vec4(72, 40, 120, 255),
+    vec4(62, 73, 137, 255),
+    vec4(49, 104, 142, 255),
     vec4(38, 130, 142, 255),
     vec4(31, 158, 137, 255),
     vec4(53, 183, 121, 255),
@@ -1074,7 +1074,7 @@ function getIsochroneLineData() {
 
     float currentTime = info0.x;
     float currentTimeLimit = info0.y;
-    float alpha = dist / currentTime; 
+    float alpha = pow(dist / currentTime, 5.0); 
     float strength = dist /currentTimeLimit;
     if (strength>1.0 || currentTime < dist) {
       discard;
@@ -1099,8 +1099,9 @@ function getIsochroneLineData() {
 
         c = getGradient10(viridis, clamp(strength, 0.0, 1.0));
       }
-      
-      outColor = c*vec4(0.6,0.6,0.6,alpha);
+      if (alpha>0.8) outColor = mix(vec4(1.0), vec4(1.0, 0.3, 0.1,alpha), (1.0-alpha)/ 0.2);
+      else outColor = mix(vec4(1.0, 0.3, 0.1,alpha), c, 1.0-alpha);
+      //outColor = c*vec4(0.6,0.6,0.6,alpha);
     }
   }
 
