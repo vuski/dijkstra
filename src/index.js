@@ -494,7 +494,7 @@ function renderDeckGL() {
         getRadius : [nearestPointMouseArr]       
       },
       // Interactive props      
-      visible : true,
+      visible : false,
       //extensions: [new DataFilterExtension({filterSize: 1})],
       //getFilterValue: d => [d.persons],
       //filterRange: [[countFrom, countTo]],
