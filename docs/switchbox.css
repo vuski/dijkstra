@@ -1,7 +1,7 @@
 .example-switchbox {
 	position: relative;
 	display: inline-block;
-	width: 4em; /*너비는 이것을 조정*/
+	width: 5em; /*너비는 이것을 조정*/
 	height: 1em;
 	padding: .125em;
 	overflow: hidden;
@@ -74,7 +74,7 @@
 	opacity: 0;
 }
 .example-switchbox.is-pressed::before {
-	transform: translateX(3em);/*너비는 이것을 조정*/
+	transform: translateX(4em);/*너비는 이것을 조정*/
 	background-color: white;
 }
 

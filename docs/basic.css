@@ -86,21 +86,14 @@ body {
 }
 
 
-.showText {
-	position: absolute;
-	margin : 5px 0px 5px 0px;
-    bottom: 40px;
-    left : 5%;
-    align-content: center;   
-    z-index: 40;
-}
 
 
-.showDiff {
+
+.searchMode {
 	position: absolute;
 	margin : 5px 0px 5px 0px;
-    bottom: 45px;
-    left : 5%;
+    bottom: 50px;
+    left : 2%;
     align-content: center;   
     z-index: 40;
 }

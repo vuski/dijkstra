@@ -15,6 +15,7 @@ import {MinQueue} from "heapify";
 import Delaunator from 'delaunator';
 
 
+
 ///////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////
@@ -293,9 +294,12 @@ let quadtree = d3.quadtree()
   .x(d => d.x)  // x 좌표로 접근
   .y(d => d.y)  // y 좌표로 접근
 
-let nearestPointMouse = 0;
+let nearestPointMouseArr = new Set();
 let animationID;
 let gradientType = 0;
+
+let isOneSource = true;
+
 
 /////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////
@@ -319,20 +323,31 @@ window.addEventListener("keydown", (e) => {
 
 
 window.addEventListener("mousemove", (e) => {
-  //console.log(e);
-  const mousex = e.clientX;
-  const mousey = e.clientY;
-  const lngLat = map.unproject([mousex, mousey]);
 
-  let nearestPoint = quadtree.find(lngLat.lng, lngLat.lat);
-  nearestPointMouse = nearestPoint.id;
+  if (!isOneSource) return;
+  console.log("mousemove");
+  if (justSwitched) {
+    justSwitched = false;
+  } else {
+    const mousex = e.clientX;
+    const mousey = e.clientY;
+    const lngLat = map.unproject([mousex, mousey]);
+  
+    let nearestPoint = quadtree.find(lngLat.lng, lngLat.lat);
+    nearestPointMouseArr.clear();
+    nearestPointMouseArr.add(nearestPoint.id);
+  }
+
 
 
   //const startTime = performance.now();
 
   resetNetwork();
   //console.log(solution);
-  solveServiceAreaFromNode(nearestPointMouse, currentTimeLimit, graph);
+  
+  for (let nearestPointMouse of nearestPointMouseArr) {
+    solveServiceAreaFromNode(nearestPointMouse, currentTimeLimit, graph);
+  }
   isochrone.updateSolutionBuffer(solution);
   //const endTime = performance.now();
   //const executionTime = endTime - startTime;     
@@ -348,6 +363,44 @@ window.addEventListener("mousemove", (e) => {
   //renderDeckGL();
 });
 
+
+window.addEventListener("click", (e) => {
+
+  if (isOneSource) return;
+  console.log("mouseclick");
+  if (justSwitched) {
+    justSwitched = false;
+  } else {
+    const mousex = e.clientX;
+    const mousey = e.clientY;
+    const lngLat = map.unproject([mousex, mousey]);
+
+    let nearestPoint = quadtree.find(lngLat.lng, lngLat.lat);
+    nearestPointMouseArr.add(nearestPoint.id);
+  }
+  //const startTime = performance.now();
+
+  resetNetwork();
+  //console.log(solution);
+  for (let nearestPointMouse of nearestPointMouseArr) {
+    solveServiceAreaFromNode(nearestPointMouse, currentTimeLimit, graph);
+  }
+  isochrone.updateSolutionBuffer(solution);
+  //const endTime = performance.now();
+  //const executionTime = endTime - startTime;     
+  //console.log(`실행 시간: ${executionTime}ms`);
+  //console.log(solution);
+  currentTime = 0.0;
+
+  //console.log(nearestPoint);  
+
+  //console.log(lngLat);  // 변환된 경위도 좌표 출력
+
+
+  //renderDeckGL();
+});
+
+
 window.addEventListener('resize', function() {
   const w = window.innerWidth, h = window.innerHeight;
 
@@ -361,6 +414,35 @@ window.addEventListener('resize', function() {
       .attr("height", h);  
   //update();
 });
+
+let justSwitched = false;
+document.querySelector("#switchbox_searchMode").addEventListener("toggleBefore", event => {
+  isOneSource = window.easyToggleState.isActive(event.target);
+  
+  if (isOneSource) {
+    currentTimeLimit = 300;
+    addTimeUnit = 2.0;    
+    justSwitched =true;
+    nearestPointMouseArr.clear();
+    resetNetwork();
+    isochrone.updateSolutionBuffer(solution);
+    
+    console.log("one source");
+  } else {
+    currentTimeLimit = 5;
+    addTimeUnit = 0.03;
+    justSwitched =true;
+    nearestPointMouseArr.clear();
+    resetNetwork();
+    isochrone.updateSolutionBuffer(solution);
+   
+    console.log("multi source");
+  }
+
+  renderDeckGL();
+}, false);
+
+
 
 let addTimeUnit = 2.0;
 let currentTimeLimit = 300;
@@ -386,13 +468,13 @@ function renderDeckGL() {
       // Styles
       filled: true,
 
-      radiusMinPixels: 1,
+      //radiusMinPixels: 1,
       //sizeMaxPixels: 10,
       radiusScale: 1,
       getPosition: d => [d.x, d.y],
       getRadius: d => {
-        if (d.id ==nearestPointMouse) return 8;
-        else return 1;
+        if (nearestPointMouseArr.has(d.id)) return 8;
+        else return 0;
       },        
       // onHover: (info) => {
       //   showInfoBox(info);
@@ -401,18 +483,18 @@ function renderDeckGL() {
       //   showInfoBox(info);
         
       // },
-      pickable: true,
-      autoHighlight: true,
+      //pickable: true,
+      //autoHighlight: true,
       radiusUnits: 'pixels',
       getFillColor: d => {
         return [30, 20, 10];
       },
       updateTriggers: {
         // This tells deck.gl to recalculate radius when `currentYear` changes
-        getRadius : [nearestPointMouse]       
+        getRadius : [nearestPointMouseArr]       
       },
       // Interactive props      
-      visible : false,
+      visible : true,
       //extensions: [new DataFilterExtension({filterSize: 1})],
       //getFilterValue: d => [d.persons],
       //filterRange: [[countFrom, countTo]],
@@ -735,6 +817,8 @@ function  drawGLcontext() {
   // Clear the canvas
   // 스텐실 테스트를 활성화합니다.
   //gl.enable(gl.STENCIL_TEST);
+  // if (isOneSource) gl.lineWidth(1);
+  // else gl.lineWidth(2.5);
   gl.disable(gl.DEPTH_TEST);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
