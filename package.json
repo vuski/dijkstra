@@ -30,5 +30,8 @@
   "keywords": [],
   "author": "",
   "license": "MIT",
-  "description": ""
+  "description": "",
+  "overrides": {
+    "fast-xml-parser": "^5.5.6"
+  }
 }
